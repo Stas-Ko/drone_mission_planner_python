@@ -6,6 +6,7 @@ import math
 # Подключение к симулятору Mission Planner через MAVProxy
 connection_string = "tcp:127.0.0.1:5762"
 
+#Рассчитывает расстояние в метрах между двумя глобальными координатами.
 def get_distance_metres(location1, location2):
     dlat = location2.lat - location1.lat
     dlong = location2.lon - location1.lon
