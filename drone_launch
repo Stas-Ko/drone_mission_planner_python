@@ -25,7 +25,7 @@ try:
     print(f"Heading: {vehicle.heading}")
 
     # Взлет на высоту 10 метров
-    target_altitude = 10.0
+    target_altitude = 100.0
     print(f"Arming and taking off to {target_altitude} meters...")
     vehicle.mode = VehicleMode("GUIDED")
     vehicle.armed = True
