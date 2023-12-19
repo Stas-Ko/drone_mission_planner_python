@@ -1,88 +1,145 @@
 from dronekit import connect, VehicleMode, LocationGlobalRelative
-from pymavlink import mavutil
 import time
-import math
+from math import radians, sin, cos, sqrt, atan2
 
-# Подключение к симулятору Mission Planner через MAVProxy
+
+# Флаг для управления поворотом дрона во время полета
+turn_away = True
+
+# Флаг для управления остановкой движения вперед-назад при приближении к цели
+stop_fly = True
+
+# Флаг для управления поворотом дрона на 350 градусов после остановки
+turn_away350 = True
+
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Вычисляет расстояние между двумя глобальными координатами в метрах.
+
+    Parameters:
+    - lat1, lon1: Широта и долгота первой точки (в градусах).
+    - lat2, lon2: Широта и долгота второй точки (в градусах).
+
+    Returns:
+    - Расстояние между точками в метрах.
+    """
+    # Радиус Земли в метрах
+    R = 6371000.0
+
+    # Преобразование координат в радианы
+    lat1_rad = radians(lat1)
+    lon1_rad = radians(lon1)
+    lat2_rad = radians(lat2)
+    lon2_rad = radians(lon2)
+
+    # Разница координат
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+
+    # Формула гаверсинусов для расчета расстояния
+    a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    # Расстояние в метрах
+    distance = R * c
+
+    return distance
+
+
+# Подключение к дрону (замените 'tcp:127.0.0.1:5762' на ваш адрес)
 connection_string = "tcp:127.0.0.1:5762"
+print("Connecting to the vehicle...")
+vehicle = connect(connection_string, wait_ready=True, timeout=60)
+print("Connected to the vehicle!")
 
-#Рассчитывает расстояние в метрах между двумя глобальными координатами.
-def get_distance_metres(location1, location2):
-    dlat = location2.lat - location1.lat
-    dlong = location2.lon - location1.lon
-    return math.sqrt((dlat * dlat) + (dlong * dlong)) * 1.113195e5
+# Выводим информацию о дроне
+print(f"Vehicle: {vehicle}")
+print(f"Armed: {vehicle.armed}")
+print(f"Mode: {vehicle.mode.name}")
+print(f"Location: {vehicle.location.global_frame}")
+print(f"Heading: {vehicle.heading}")
+
+# Задаем координаты точки, к которой дрон должен лететь
+target_location = (50.443326, 30.448078)
 
 try:
-    # Подключение к дрону
-    print("Connecting to the vehicle...")
-    vehicle = connect(connection_string, wait_ready=True, timeout=60)
-    print("Connected to the vehicle!")
+    # Устанавливаем режим ALT_HOLD
+    vehicle.mode = VehicleMode("ALT_HOLD")
 
-    # Выводим информацию о дроне
-    print(f"Vehicle: {vehicle}")
-    print(f"Armed: {vehicle.armed}")
-    print(f"Mode: {vehicle.mode.name}")
-    print(f"Location: {vehicle.location.global_frame}")
-    print(f"Heading: {vehicle.heading}")
 
-    # Взлет на высоту 10 метров
-    target_altitude = 100.0
-    print(f"Arming and taking off to {target_altitude} meters...")
-    vehicle.mode = VehicleMode("GUIDED")
+    # Проверяем, что дрон включен и в режиме ALT_HOLD
     vehicle.armed = True
+    time.sleep(1)
+    print(f"Mode: {vehicle.mode.name}")
 
-    while not vehicle.armed:
-        time.sleep(1)
-
+    # Устанавливаем высоту в 100 метров
+    target_altitude = 100
     vehicle.simple_takeoff(target_altitude)
 
-    # Ждем, пока дрон достигнет целевой высоты
+    print(f"Altitude set to {target_altitude} meters. Gaining altitude...")
+
+    # Управляем высотой
     while True:
-        print(f"Altitude: {vehicle.location.global_relative_frame.alt}")
-        if vehicle.location.global_relative_frame.alt >= target_altitude * 0.95:
-            print("Reached target altitude!")
-            break
-        time.sleep(1)
+        current_altitude = vehicle.location.global_relative_frame.alt
 
-    # Ожидаем несколько секунд перед началом движения
-    time.sleep(5)
+        # Задаем значение для увеличения высоты
+        if current_altitude < target_altitude:
+            vehicle.channels.overrides['3'] = 2000  # Замените на нужное значение
+            # Если дрон находится ближе к целевой высоте, уменьшаем мощность для точного набора высоты
+            if current_altitude >= target_altitude - 3:
+                vehicle.channels.overrides['3'] = 1425  # Замените на нужное значение
 
-    # Перемещение к точке Б = Точка Куда лететь
-    target_location_destination = LocationGlobalRelative(50.443326, 30.448078, target_altitude)
-    print(f"Moving to destination point B: {target_location_destination.lat}, {target_location_destination.lon}, {target_location_destination.alt}...")
+                # Первый разворот для коррекции направления при наборе высоты
+                if turn_away:
+                    vehicle.channels.overrides['4'] = 1376  # Замените на нужное значение
+                    time.sleep(3)
+                    vehicle.channels.overrides = {}
+                    turn_away = False  # После выполнения разворота прекращаем повторные развороты
 
-    # Ждем, пока дрон достигнет целевой точки
-    vehicle.simple_goto(target_location_destination)
+                # Дополнительные коррекции, если дрон находится ближе к целевой высоте
+                if current_altitude >= target_altitude - 0.1:
+                    vehicle.channels.overrides['3'] = 1420  # Замените на нужное значение
 
-    while get_distance_metres(vehicle.location.global_frame, target_location_destination) > 1.0:
-        remaining_distance = get_distance_metres(vehicle.location.global_frame, target_location_destination)
-        print(f"Distance to destination point B: {remaining_distance} meters")
-        time.sleep(1)
 
-    print("Reached destination point B!")
+        else:
+            # Задаем значение для уменьшения высоты, если выше целевой
+            vehicle.channels.overrides['3'] = 1400
 
-    # Поворот на азимут (yaw) 350 градусов
-    target_yaw = 350
-    print(f"Turning to yaw {target_yaw} degrees...")
+            # Получаем текущие глобальные координаты дрона
+            current_location = (vehicle.location.global_relative_frame.lat, vehicle.location.global_relative_frame.lon)
 
-    msg = vehicle.message_factory.command_long_encode(
-        0, 0,  # target system, target component
-        mavutil.mavlink.MAV_CMD_CONDITION_YAW,  # command
-        0,  # confirmation
-        target_yaw,  # param 1 (yaw angle in degrees)
-        0,  # param 2 (yaw speed in degrees per second)
-        1,  # param 3 (direction: 1 - clockwise, -1 - counterclockwise)
-        0,  # param 4 (relative offset in degrees)
-        0, 0, 0)  # param 5-7 (not used)
+            # Вычисляем расстояние между текущим положением и целевыми координатами
+            distance_to_target = calculate_distance(current_location[0], current_location[1], target_location[0],
+                                                    target_location[1])
 
-    vehicle.send_mavlink(msg)
-    time.sleep(5)  # Подождем несколько секунд, чтобы дрон завершил поворот
+            # При удалении от цели больше 25 метров снижаем скорость движения вперед
+            if int(distance_to_target) > 25 and stop_fly:
+                vehicle.channels.overrides['2'] = 1000
+            else:
+                vehicle.channels.overrides['2'] = 1500
+                stop_fly = False  # После снижения скорости прекращаем повторное снижение
 
-    # Вырубаем двигатели и заканчиваем программу
-    print("Disarming and closing connection...")
+
+                # При первом вхождении в блок разворота на 350 градусов
+                if turn_away350:
+                    print("Reached the target coordinates.")
+                    time.sleep(5)
+                    print("Initiating 350-degree turn...")
+                    vehicle.channels.overrides['4'] = 1616
+                    time.sleep(5)
+                    vehicle.channels.overrides = {}
+                    print("350-degree turn completed.")
+                    turn_away350 = False  # После выполнения разворота прекращаем повторные развороты
+
+        time.sleep(0.1)
+
+except KeyboardInterrupt:
+    print("Interrupted by the user.")
+
+finally:
+    # Выключаем двигатели и закрываем соединение при завершении
+    vehicle.channels.overrides['3'] = 1500  # Установите значение для выключения двигателей
     vehicle.armed = False
     time.sleep(1)
     vehicle.close()
-
-except Exception as e:
-    print(f"Error connecting to or controlling the vehicle: {e}")
